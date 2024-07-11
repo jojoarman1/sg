@@ -481,7 +481,7 @@ async def handle_discussion_message(message: types.Message):
             original_message_text = 'Медиа'
 
         # Формируем ссылку на оригинальное сообщение
-        original_message_link = f"t.me/c/2244000979/{original_message.message_id}?thread={original_message.message_id}"
+        original_message_link = f"t.me/c/2225022005/{original_message.message_id}?thread={original_message.message_id}"
         print(f"Ссылка на исходное сообщение: {original_message_link}")
 
         notification_text = (
