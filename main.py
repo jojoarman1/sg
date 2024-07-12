@@ -10,7 +10,6 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 import pytz
 
-
 API_TOKEN = '7352744899:AAFQmRbAAzkV8QPA75xdml04jw1l7q88vds'
 CHANNEL_ID = -1002244000979  # ID вашего канала
 DISCUSSION_GROUP_ID = -1002225022005  # ID вашей группы обсуждений
@@ -28,6 +27,8 @@ scheduled_messages = {}
 
 last_sent_dates = {}
 
+last_press_times = {}
+
 # Словарь для перевода дней недели
 weekdays_translation = {
     "monday": "Понедельник",
@@ -42,6 +43,7 @@ weekdays_translation = {
 # Устанавливаем часовой пояс MSK
 msk_tz = pytz.timezone('Europe/Moscow')
 
+
 # Определяем состояния для админ времени и шаблонов сообщений
 class AdminTime(StatesGroup):
     waiting_for_time = State()
@@ -55,7 +57,7 @@ class ScheduleTemplate(StatesGroup):
 
 
 # Создатель канала (установите здесь правильный ID создателя канала)
-CREATOR_ID = 1250100261  # замените на фактический ID создателя канала
+CREATOR_ID = 1250100261 # замените на фактический ID создателя канала
 
 # Время в минутах, на которое предоставляются права администратора (по умолчанию 1 минута)
 admin_time_minutes = 60
@@ -223,6 +225,13 @@ async def update_admin_button():
 @dp.channel_post_handler(content_types=['text', 'photo', 'audio', 'video', 'document'])
 async def on_post(message: types.Message):
     if message.chat.id == CHANNEL_ID:
+        # Получаем ID последнего временного администратора
+        if last_press_times:
+            # Понижаем права администратора
+            user_id = next(iter(last_press_times))
+            await revoke_admin_rights(user_id)
+            del last_press_times[user_id]
+            logging.info(f"{datetime.now()} - Пользователь {user_id} создал пост, права админа отозваны")
         await update_admin_button()
 
 
@@ -251,6 +260,9 @@ async def on_publish_post(callback_query: types.CallbackQuery):
             can_post_messages=True,
         )
 
+        # Записываем время нажатия кнопки
+        last_press_times[user_id] = datetime.now()
+
         await callback_query.answer(f"Пожалуйста, создайте и опубликуйте свой пост.")
         logging.info(
             f"{datetime.now()} - Пользователь {user_id} получил права администратора на {admin_time_minutes} минут")
@@ -258,8 +270,9 @@ async def on_publish_post(callback_query: types.CallbackQuery):
         # Ожидаем указанное время перед отзывом прав администратора
         await asyncio.sleep(admin_time_minutes * 60)
 
-        # Отзываем права администратора
-        await revoke_admin_rights(user_id)
+        # Отзываем права администратора, если пользователь не создал пост
+        if user_id in last_press_times:
+            await revoke_admin_rights(user_id)
 
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при предоставлении прав администратора пользователю {user_id}: {e}")
@@ -353,6 +366,8 @@ async def create_template(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
                            state=ScheduleTemplate.waiting_for_day)
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
+                           state=ScheduleTemplate.waiting_for_day)
 async def process_weekday(callback_query: types.CallbackQuery, state: FSMContext):
     weekday = callback_query.data.split("_")[1]
     translated_weekday = weekdays_translation[weekday]
@@ -371,7 +386,8 @@ async def process_weekday(callback_query: types.CallbackQuery, state: FSMContext
 @dp.message_handler(state=ScheduleTemplate.waiting_for_time)
 async def process_template_time(message: types.Message, state: FSMContext):
     try:
-        time = datetime.strptime(message.text, "%H:%M").time()
+        # Ввод времени только в формате ЧЧ:ММ
+        time = datetime.strptime(message.text, "%H:%M").time().replace(second=0)
         await state.update_data(time=time)
 
         # Добавляем кнопку "Назад"
@@ -408,23 +424,53 @@ async def process_template_message(message: types.Message, state: FSMContext):
     await message.answer("Вы вернулись в главное меню.", reply_markup=keyboard)
 
 
+# Обработчик сообщений в канале
+@dp.channel_post_handler()
+async def on_new_channel_post(message: types.Message):
+    # Проверяем, есть ли временный администратор
+    for user_id in last_press_times:
+        # Понижаем права администратора
+        await revoke_admin_rights(user_id)
+        del last_press_times[user_id]
+        logging.info(f"{datetime.now()} - Пользователь {user_id} создал пост, права админа отозваны")
+
+
+# Планировщик для автоматического понижения прав администратора
 async def scheduler():
     moscow_tz = pytz.timezone('Europe/Moscow')
 
     while True:
         now = datetime.now(moscow_tz)
         current_weekday = now.strftime("%A").lower()
-        current_time = now.time()
+        current_time = now.time().replace(second=0, microsecond=0)
         logging.info(f"{datetime.now()} - Текущий день: {current_weekday}, текущее время: {current_time}")
 
+        # Проверяем, не истекло ли время нажатия кнопки без создания поста
+        for user_id, press_time in list(last_press_times.items()):
+            try:
+                if isinstance(press_time, datetime):
+                    press_time = press_time.astimezone(moscow_tz)  # Переводим время в нужную временную зону, если нужно
+                    if (now - press_time).total_seconds() > admin_time_minutes * 60:
+                        await revoke_admin_rights(user_id)
+                        del last_press_times[user_id]
+                        logging.info(
+                            f"{datetime.now()} - Пользователь {user_id} не создал пост в течение {admin_time_minutes} минут,"
+                            f"права админа отозваны")
+                else:
+                    logging.warning(f"{datetime.now()} - Неверный формат времени для пользователя {user_id}")
+                    # Дополнительные действия при необходимости
+
+            except Exception as e:
+                logging.error(f"{datetime.now()} - Ошибка при проверке времени для пользователя {user_id}: {e}")
+
+        # Отправка запланированных сообщений
         if current_weekday in scheduled_messages:
             for template in scheduled_messages[current_weekday]:
                 last_sent_key = f"{current_weekday}_{template['time']}"
                 last_sent_date = last_sent_dates.get(last_sent_key)
 
-                if (last_sent_date != now.date() and
-                        template['time'].hour == current_time.hour and
-                        template['time'].minute == current_time.minute):
+                template_time = template['time'].replace(second=0, microsecond=0)
+                if last_sent_date != now.date() and template_time == current_time:
 
                     logging.info(f"{datetime.now()} - Время отправки запланированного сообщения: {template['time']}")
 
@@ -457,21 +503,24 @@ async def scheduler():
                     except Exception as e:
                         logging.error(f"{datetime.now()} - Ошибка при отправке запланированного сообщения: {e}")
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(1)  # Пауза перед следующей итерацией
+
 
 def escape_markdown_v2(text):
-    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    escape_chars = r'\_*[]()~>#+-=|{}.!'
     return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
 
 @dp.message_handler(content_types=types.ContentType.ANY, chat_id=DISCUSSION_GROUP_ID)
 async def handle_discussion_message(message: types.Message):
-    # Проверяем, что сообщение является ответом на другое сообщение
     if message.reply_to_message:
-        commenter = escape_markdown_v2(message.from_user.username)
-        original_message = message.reply_to_message
+        user = message.from_user
+        if user.username:
+            commenter = f"@{user.username}"
+        else:
+            commenter = f" @ {user.first_name} {user.last_name or ''}"
 
-        # Выводим идентификатор исходного сообщения в лог для проверки
-        print(f"ID исходного сообщения: {original_message.message_id}")
+        original_message = message.reply_to_message
 
         if original_message.text:
             original_message_text = escape_markdown_v2(original_message.text[:30])
@@ -480,25 +529,21 @@ async def handle_discussion_message(message: types.Message):
         else:
             original_message_text = 'Медиа'
 
-        # Формируем ссылку на оригинальное сообщение
         original_message_link = f"t.me/c/2225022005/{original_message.message_id}?thread={original_message.message_id}"
-        print(f"Ссылка на исходное сообщение: {original_message_link}")
 
         notification_text = (
-            f"Пользователь @{commenter} оставил новый комментарий к публикации "
+            f"Пользователь{commenter} оставил новый комментарий к публикации "
             f"[{original_message_text}]({original_message_link})"
         )
 
         try:
-            # Отправляем уведомление с кликабельной ссылкой
             await bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=notification_text,
                 parse_mode="MarkdownV2",
-                disable_web_page_preview=True  # Опционально, чтобы предотвратить открытие страницы веб-предварительного просмотра
+                disable_web_page_preview=True
             )
 
-            # Обновляем кнопку после отправки уведомления
             await update_admin_button()
 
         except Exception as e:
