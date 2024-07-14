@@ -10,7 +10,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 import pytz
 
-API_TOKEN = '6426877553:AAH21xz52t9CWn0uC4BMjnAYXmTeS-36Wtk'
+API_TOKEN = '7352744899:AAFQmRbAAzkV8QPA75xdml04jw1l7q88vds'
 CHANNEL_ID = -1002244000979  # ID вашего канала
 DISCUSSION_GROUP_ID = -1002225022005  # ID вашей группы обсужденийй
 logging.basicConfig(level=logging.INFO)
