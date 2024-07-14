@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,9 +10,9 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 import pytz
 
-API_TOKEN = '7352744899:AAFQmRbAAzkV8QPA75xdml04jw1l7q88vds'
+API_TOKEN = '6426877553:AAH21xz52t9CWn0uC4BMjnAYXmTeS-36Wtk'
 CHANNEL_ID = -1002244000979  # ID вашего канала
-DISCUSSION_GROUP_ID = -1002225022005  # ID вашей группы обсуждений
+DISCUSSION_GROUP_ID = -1002225022005  # ID вашей группы обсужденийй
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
@@ -28,6 +28,8 @@ scheduled_messages = {}
 last_sent_dates = {}
 
 last_press_times = {}
+# Часовой пояс пользователя хранится тут
+user_timezones = {}
 
 # Словарь для перевода дней недели
 weekdays_translation = {
@@ -57,10 +59,10 @@ class ScheduleTemplate(StatesGroup):
 
 
 # Создатель канала (установите здесь правильный ID создателя канала)
-CREATOR_ID = 1250100261 # замените на фактический ID создателя канала
+CREATOR_ID = 1250100261  # замените на фактический ID создателя канала
 
 # Время в минутах, на которое предоставляются права администратора (по умолчанию 1 минута)
-admin_time_minutes = 60
+admin_time_minutes = 3
 
 
 # Функция для создания клавиатуры с предустановленными временными значениями и кнопкой для ввода своего времени
@@ -213,7 +215,7 @@ async def update_admin_button():
         # Отправляем сообщение с кнопкой в канал
         sent_message = await bot.send_message(
             chat_id=CHANNEL_ID,
-            text="Создать и опубликовать пост",
+            text="Опубликовать свой пост",
             reply_markup=keyboard
         )
         current_messages[CHANNEL_ID] = sent_message.message_id
@@ -222,36 +224,44 @@ async def update_admin_button():
         logging.error(f"{datetime.now()} - Ошибка при отправке кнопки для нового сообщения: {e}")
 
 
+# Вставка кода для обработки случая, когда пользователь успевает написать пост
 @dp.channel_post_handler(content_types=['text', 'photo', 'audio', 'video', 'document'])
 async def on_post(message: types.Message):
-    if message.chat.id == CHANNEL_ID:
-        # Получаем ID последнего временного администратора
-        if last_press_times:
-            # Понижаем права администратора
-            user_id = next(iter(last_press_times))
-            await revoke_admin_rights(user_id)
-            del last_press_times[user_id]
-            logging.info(f"{datetime.now()} - Пользователь {user_id} создал пост, права админа отозваны")
-        await update_admin_button()
+    await update_admin_button()
 
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("promote_"))
 async def on_publish_post(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     try:
+        # Определение часового пояса пользователя
+        user_timezone = user_timezones.get(user_id)
+        if user_timezone is None:
+            # Запрашиваем часовой пояс пользователя или используем по умолчанию (например, 'Europe/Moscow')
+            user_timezone = 'Europe/Moscow'
+            user_timezones[user_id] = user_timezone
+
+        user_tz = pytz.timezone(user_timezone)
+
         # Проверка, что бот является администратором канала
         chat = await bot.get_chat(CHANNEL_ID)
         if chat.type != 'channel':
-            await callback_query.answer("Бот должен быть администратором канала.")
+            await callback_query.answer("Бот должен быть администратором канала.", show_alert=True)
             logging.error(f"{datetime.now()} - Бот не является администратором канала.")
             return
 
         # Проверяем, является ли пользователь владельцем канала
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         if member.status == 'creator':
-            await callback_query.answer("Вы уже являетесь владельцем канала.")
+            await callback_query.answer("Вы являетесь владельцем канала.", show_alert=True)
             logging.info(f"{datetime.now()} - Пользователь {user_id} является владельцем канала.")
             return
+
+        now = datetime.now(user_tz)
+
+        # Если пользователь уже нажал кнопку, обновляем время начала
+        if user_id in last_press_times:
+            del last_press_times[user_id]  # Удаляем старое время из словаря
 
         # Предоставляем права администратора
         await bot.promote_chat_member(
@@ -260,10 +270,11 @@ async def on_publish_post(callback_query: types.CallbackQuery):
             can_post_messages=True,
         )
 
-        # Записываем время нажатия кнопки
-        last_press_times[user_id] = datetime.now()
+        # Записываем новое время нажатия кнопки
+        last_press_times[user_id] = now + timedelta(minutes=admin_time_minutes)
+        extended_time = last_press_times[user_id].astimezone(user_tz).strftime('%H:%M')
 
-        await callback_query.answer(f"Пожалуйста, создайте и опубликуйте свой пост.")
+        await callback_query.answer(f"Пожалуйста, опубликуйте пост до {extended_time} мск.", show_alert=True)
         logging.info(
             f"{datetime.now()} - Пользователь {user_id} получил права администратора на {admin_time_minutes} минут")
 
@@ -271,7 +282,7 @@ async def on_publish_post(callback_query: types.CallbackQuery):
         await asyncio.sleep(admin_time_minutes * 60)
 
         # Отзываем права администратора, если пользователь не создал пост
-        if user_id in last_press_times:
+        if user_id in last_press_times and datetime.now(user_tz) >= last_press_times[user_id]:
             await revoke_admin_rights(user_id)
 
     except Exception as e:
@@ -280,20 +291,11 @@ async def on_publish_post(callback_query: types.CallbackQuery):
 
 async def revoke_admin_rights(user_id):
     try:
-        # Понижаем пользователя до обычного участника
+        # Отзываем администраторские права у пользователя
         await bot.promote_chat_member(
             chat_id=CHANNEL_ID,
             user_id=user_id,
-            can_post_messages=False,
-            can_edit_messages=False,
-            can_delete_messages=False,
-            can_invite_users=False,
-            can_restrict_members=False,
-            can_pin_messages=False,
-            can_promote_members=False,
-            can_manage_chat=False,
-            can_manage_voice_chats=False,
-            can_change_info=False
+            can_promote_members=False
         )
         logging.info(f"{datetime.now()} - Права администратора отозваны у пользователя {user_id}")
 
@@ -448,14 +450,15 @@ async def scheduler():
         # Проверяем, не истекло ли время нажатия кнопки без создания поста
         for user_id, press_time in list(last_press_times.items()):
             try:
+                user_timezone = user_timezones.get(user_id, 'Europe/Moscow')
+                user_tz = pytz.timezone(user_timezone)
                 if isinstance(press_time, datetime):
-                    press_time = press_time.astimezone(moscow_tz)  # Переводим время в нужную временную зону, если нужно
-                    if (now - press_time).total_seconds() > admin_time_minutes * 60:
+                    press_time = press_time.astimezone(user_tz)  # Переводим время в нужную временную зону пользователя
+                    if now >= press_time:
                         await revoke_admin_rights(user_id)
                         del last_press_times[user_id]
                         logging.info(
-                            f"{datetime.now()} - Пользователь {user_id} не создал пост в течение {admin_time_minutes} минут,"
-                            f"права админа отозваны")
+                            f"{datetime.now()} - Пользователь {user_id} не создал пост в течение {admin_time_minutes} минут, права админа отозваны")
                 else:
                     logging.warning(f"{datetime.now()} - Неверный формат времени для пользователя {user_id}")
                     # Дополнительные действия при необходимости
@@ -506,20 +509,24 @@ async def scheduler():
         await asyncio.sleep(1)  # Пауза перед следующей итерацией
 
 
-def escape_markdown_v2(text):
-    escape_chars = r'\_*[]()~>#+-=|{}.!'
-    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
+def escape_markdown_v2(text: str) -> str:
+    """
+    Экранирует специальные символы для MarkdownV2.
+    """
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(['\\' + char if char in escape_chars else char for char in text])
 
 
 @dp.message_handler(content_types=types.ContentType.ANY, chat_id=DISCUSSION_GROUP_ID)
 async def handle_discussion_message(message: types.Message):
-    if message.reply_to_message:
-        user = message.from_user
-        if user.username:
-            commenter = f"@{user.username}"
-        else:
-            commenter = f" @ {user.first_name} {user.last_name or ''}"
+    user = message.from_user
+    if user.username:
+        commenter = f"@{escape_markdown_v2(user.username)}"
+    else:
+        commenter = escape_markdown_v2(f"@ {user.first_name} {user.last_name or ''}")
 
+    if message.reply_to_message:
         original_message = message.reply_to_message
 
         if original_message.text:
@@ -530,10 +537,15 @@ async def handle_discussion_message(message: types.Message):
             original_message_text = 'Медиа'
 
         original_message_link = f"t.me/c/2225022005/{original_message.message_id}?thread={original_message.message_id}"
+        original_message_link_escaped = escape_markdown_v2(original_message_link)
 
         notification_text = (
-            f"Пользователь{commenter} оставил новый комментарий к публикации "
-            f"[{original_message_text}]({original_message_link})"
+            "Пользователь {commenter} оставил новый комментарий к публикации "
+            "[{original_message_text}]({original_message_link})"
+        ).format(
+            commenter=commenter,
+            original_message_text=original_message_text,
+            original_message_link=original_message_link_escaped
         )
 
         try:
