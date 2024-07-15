@@ -212,17 +212,17 @@ async def update_admin_button():
     keyboard.add(button)
 
     try:
-        # Отправляем сообщение с кнопкой в канал
+        # Отправляем сообщение с кнопкой в канал без звукового уведомления
         sent_message = await bot.send_message(
             chat_id=CHANNEL_ID,
             text="Опубликовать свой пост",
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            disable_notification=True  # Отключение звукового уведомления
         )
         current_messages[CHANNEL_ID] = sent_message.message_id
         logging.info(f"{datetime.now()} - Отправлена кнопка для нового сообщения")
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при отправке кнопки для нового сообщения: {e}")
-
 
 # Вставка кода для обработки случая, когда пользователь успевает написать пост
 @dp.channel_post_handler(content_types=['text', 'photo', 'audio', 'video', 'document'])
@@ -509,7 +509,6 @@ async def scheduler():
         await asyncio.sleep(1)  # Пауза перед следующей итерацией
 
 
-
 def escape_markdown_v2(text: str) -> str:
     """
     Экранирует специальные символы для MarkdownV2.
@@ -536,11 +535,11 @@ async def handle_discussion_message(message: types.Message):
         else:
             original_message_text = 'Медиа'
 
-        original_message_link = f"t.me/c/2225022005/{original_message.message_id}?thread={original_message.message_id}"
+        original_message_link = f"t.me/c/2235974095/{original_message.message_id}?thread={original_message.message_id}"
         original_message_link_escaped = escape_markdown_v2(original_message_link)
 
         notification_text = (
-            "Пользователь {commenter} оставил новый комментарий к публикации "
+            "> Пользователь {commenter} оставил новый комментарий к публикации "
             "[{original_message_text}]({original_message_link})"
         ).format(
             commenter=commenter,
@@ -560,8 +559,7 @@ async def handle_discussion_message(message: types.Message):
 
         except Exception as e:
             logging.error(f"Ошибка при отправке уведомления: {e}")
-
-
+            
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.create_task(scheduler())
