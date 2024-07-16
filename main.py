@@ -535,7 +535,7 @@ async def handle_discussion_message(message: types.Message):
         else:
             original_message_text = 'Медиа'
 
-        original_message_link = f"t.me/c/2235974095/{original_message.message_id}?thread={original_message.message_id}"
+        original_message_link = f"t.me/c/2225022005/{original_message.message_id}?thread={original_message.message_id}"
         original_message_link_escaped = escape_markdown_v2(original_message_link)
 
         notification_text = (
