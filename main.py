@@ -19,6 +19,15 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 dp.middleware.setup(LoggingMiddleware())
 
+# Функция для экранирования специальных символов для MarkdownV2
+def escape_markdown_v2(text: str) -> str:
+    """
+    Экранирует специальные символы для MarkdownV2.
+    """
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
+
 # Словарь для хранения текущих сообщений и их кнопок
 current_messages = {}
 
@@ -56,7 +65,8 @@ class ScheduleTemplate(StatesGroup):
     waiting_for_day = State()
     waiting_for_time = State()
     waiting_for_message = State()
-
+    waiting_for_interval = State()  # Новое состояние для выбора интервала
+    waiting_for_custom_interval = State()  # Новое состояние для ввода кастомного интервала
 
 # Создатель канала (установите здесь правильный ID создателя канала)
 CREATOR_ID = 1250100261  # замените на фактический ID создателя канала
@@ -67,13 +77,13 @@ admin_time_minutes = 3
 
 # Функция для создания клавиатуры с предустановленными временными значениями и кнопкой для ввода своего времени
 def create_time_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard = InlineKeyboardMarkup(row_width=1)  # Используем row_width=1 для кнопок в столбик
     buttons = [
-        InlineKeyboardButton(text="Ввести время", callback_data="set_time_custom")
+        InlineKeyboardButton(text="Ввести время", callback_data="set_time_custom"),
+        InlineKeyboardButton(text="Назад", callback_data="main_menu")  # Добавляем кнопку назад
     ]
     keyboard.add(*buttons)
     return keyboard
-
 
 def create_template_menu():
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -84,27 +94,36 @@ def create_template_menu():
     keyboard.add(*buttons)
     return keyboard
 
-
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "view_templates")
 async def view_templates(callback_query: types.CallbackQuery):
     if callback_query.from_user.id == CREATOR_ID:
+        keyboard = InlineKeyboardMarkup(row_width=1)  # Устанавливаем row_width на 1 для отображения кнопок в столбик
+
         if not scheduled_messages:
-            # Добавляем кнопку "Создать шаблон"
-            keyboard = InlineKeyboardMarkup(row_width=1)
+            # Если нет шаблонов, показываем только кнопки "Создать шаблон" и "Назад"
             create_template_button = InlineKeyboardButton(text="Создать шаблон", callback_data="create_template")
             back_button = InlineKeyboardButton(text="Назад", callback_data="main_menu")
             keyboard.add(create_template_button, back_button)
 
             await callback_query.message.edit_text("У вас нет созданных шаблонов.", reply_markup=keyboard)
         else:
-            # Собираем информацию о шаблонах
-            keyboard = InlineKeyboardMarkup(row_width=1)
+            # Если есть шаблоны, собираем информацию о них
             for weekday, templates in scheduled_messages.items():
                 translated_weekday = weekdays_translation[weekday]
                 for index, template in enumerate(templates):
                     time = template['time'].strftime('%H:%M')
                     content = template['content']
-                    button_text = f"{translated_weekday} в {time}: {content.text if content.text else 'Медиа'}"
+                    interval = template['interval_weeks']
+                    interval_text = (
+                        "Один раз" if interval == 0 else
+                        f"Каждые {interval} недели"
+                    )
+                    button_text = (
+                        f"🗓 {escape_markdown_v2(translated_weekday)}\n"
+                        f"Время: {escape_markdown_v2(time)}\n"
+                        f"Интервал: {escape_markdown_v2(interval_text)}\n"
+                        f"Сообщение:\n{escape_markdown_v2(content.text[:200]) if content.text else 'Медиа'}"
+                    )
                     button_callback_data = f"select_template_{weekday}_{index}"
                     keyboard.add(InlineKeyboardButton(text=button_text, callback_data=button_callback_data))
 
@@ -112,10 +131,9 @@ async def view_templates(callback_query: types.CallbackQuery):
             back_button = InlineKeyboardButton(text="Назад", callback_data="main_menu")
             keyboard.add(back_button)
 
-            await callback_query.message.edit_text("Ваши шаблоны:", reply_markup=keyboard)
+            await callback_query.message.edit_text("Ваши шаблоны:", reply_markup=keyboard, parse_mode='MarkdownV2')
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
-
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("select_template_"))
 async def select_template(callback_query: types.CallbackQuery):
@@ -127,20 +145,27 @@ async def select_template(callback_query: types.CallbackQuery):
         template = scheduled_messages[weekday][index]
         time = template['time'].strftime('%H:%M')
         content = template['content']
+        interval = template['interval_weeks']
+        interval_text = (
+            "Один раз" if interval == 0 else
+            f"Каждые {interval} недели"
+        )
 
         # Создаем кнопки для редактирования или удаления шаблона
         keyboard = InlineKeyboardMarkup(row_width=1)
-        delete_button = InlineKeyboardButton(text="Удалить", callback_data=f"delete_template_{weekday}_{index}")
-        back_button = InlineKeyboardButton(text="Назад", callback_data="view_templates")
+        delete_button = InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_template_{weekday}_{index}")
+        back_button = InlineKeyboardButton(text="🔙 Назад", callback_data="view_templates")
         keyboard.add(delete_button, back_button)
 
-        await callback_query.message.edit_text(
-            f"Шаблон для {weekdays_translation[weekday]} в {time}:\n{content.text if content.text else 'Медиа'}",
-            reply_markup=keyboard
+        message_text = (
+            f"📅 **Шаблон для {escape_markdown_v2(weekdays_translation[weekday])} в {escape_markdown_v2(time)}:**\n\n"
+            f"📜 **Сообщение:**\n{escape_markdown_v2(content.text) if content.text else 'Медиа'}\n\n"
+            f"🔄 **Интервал:** {escape_markdown_v2(interval_text)}"
         )
+
+        await callback_query.message.edit_text(message_text, reply_markup=keyboard, parse_mode='MarkdownV2')
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
-
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("delete_template_"))
 async def delete_template(callback_query: types.CallbackQuery):
@@ -161,7 +186,6 @@ async def delete_template(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
-
 def create_weekday_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     buttons = [
@@ -177,9 +201,8 @@ def create_weekday_keyboard():
     keyboard.add(*buttons)
     return keyboard
 
-
 def create_main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard = InlineKeyboardMarkup(row_width=1)  # Установите row_width на 1 для отображения кнопок в столбик
     buttons = [
         InlineKeyboardButton(text="Установить время админа", callback_data="set_admin_time"),
         InlineKeyboardButton(text="Планирование сообщений", callback_data="schedule_message")
@@ -187,6 +210,41 @@ def create_main_menu():
     keyboard.add(*buttons)
     return keyboard
 
+def create_interval_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    buttons = [
+        InlineKeyboardButton(text="Один раз", callback_data="interval_0"),
+        InlineKeyboardButton(text="Каждую неделю", callback_data="interval_1_week"),
+        InlineKeyboardButton(text="Каждый месяц", callback_data="interval_5_weeks"),
+        InlineKeyboardButton(text="Ввести интервал", callback_data="set_custom_interval"),
+        InlineKeyboardButton(text="Назад", callback_data="create_template")
+    ]
+    keyboard.add(*buttons)
+    return keyboard
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == "set_custom_interval", state=ScheduleTemplate.waiting_for_interval)
+async def set_custom_interval(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text("Введите интервал в неделях:")
+    await ScheduleTemplate.waiting_for_custom_interval.set()
+
+@dp.message_handler(state=ScheduleTemplate.waiting_for_custom_interval)
+async def process_custom_interval(message: types.Message, state: FSMContext):
+    try:
+        interval_weeks = int(message.text)
+        await state.update_data(interval_weeks=interval_weeks)
+
+        await message.answer(f"Интервал установлен на {interval_weeks} недель. Введите сообщение для планирования:")
+        await ScheduleTemplate.waiting_for_message.set()
+    except ValueError:
+        await message.answer("Введите корректное число.")
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("interval_"), state=ScheduleTemplate.waiting_for_interval)
+async def process_template_interval(callback_query: types.CallbackQuery, state: FSMContext):
+    interval_weeks = int(callback_query.data.split("_")[1])
+    await state.update_data(interval_weeks=interval_weeks)
+
+    await callback_query.message.edit_text(f"Интервал установлен на {interval_weeks} недель. Введите сообщение для планирования:")
+    await ScheduleTemplate.waiting_for_message.set()
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "main_menu", state="*")
 async def return_to_main_menu(callback_query: types.CallbackQuery, state: FSMContext):
@@ -196,7 +254,6 @@ async def return_to_main_menu(callback_query: types.CallbackQuery, state: FSMCon
         await state.finish()  # Завершаем текущее состояние
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
-
 
 async def update_admin_button():
     if CHANNEL_ID in current_messages:
@@ -223,6 +280,7 @@ async def update_admin_button():
         logging.info(f"{datetime.now()} - Отправлена кнопка для нового сообщения")
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при отправке кнопки для нового сообщения: {e}")
+
 
 # Вставка кода для обработки случая, когда пользователь успевает написать пост
 @dp.channel_post_handler(content_types=['text', 'photo', 'audio', 'video', 'document'])
@@ -288,7 +346,6 @@ async def on_publish_post(callback_query: types.CallbackQuery):
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при предоставлении прав администратора пользователю {user_id}: {e}")
 
-
 async def revoke_admin_rights(user_id):
     try:
         # Отзываем администраторские права у пользователя
@@ -302,7 +359,6 @@ async def revoke_admin_rights(user_id):
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при отзыве прав администратора у пользователя {user_id}: {e}")
 
-
 @dp.message_handler(commands=['start'])
 async def start_command(message: types.Message):
     if message.from_user.id == CREATOR_ID:
@@ -310,7 +366,6 @@ async def start_command(message: types.Message):
         await message.answer("Добро пожаловать! Выберите действие:", reply_markup=keyboard)
     else:
         await message.answer("У вас нет прав для использования этого бота.")
-
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "set_admin_time")
 async def set_admin_time(callback_query: types.CallbackQuery):
@@ -321,13 +376,11 @@ async def set_admin_time(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
-
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "set_time_custom")
 async def set_time_custom(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text(
-        "Пожалуйста, введите время в минутах для предоставления прав администратора:")
+        "Введите время в минутах для предоставления прав администратора:")
     await AdminTime.waiting_for_custom_time.set()
-
 
 @dp.message_handler(state=AdminTime.waiting_for_custom_time)
 async def process_custom_time(message: types.Message, state: FSMContext):
@@ -344,8 +397,7 @@ async def process_custom_time(message: types.Message, state: FSMContext):
             reply_markup=keyboard)
         await state.finish()
     except ValueError:
-        await message.answer("Пожалуйста, введите корректное число.")
-
+        await message.answer("Введите корректное число.")
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "schedule_message")
 async def schedule_message(callback_query: types.CallbackQuery):
@@ -365,7 +417,6 @@ async def create_template(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
-
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
                            state=ScheduleTemplate.waiting_for_day)
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
@@ -381,9 +432,8 @@ async def process_weekday(callback_query: types.CallbackQuery, state: FSMContext
     keyboard.add(back_button)
 
     await callback_query.message.edit_text(f"Выбран день недели: {translated_weekday}")
-    await callback_query.message.answer("Пожалуйста, введите время в формате ЧЧ:ММ", reply_markup=keyboard)
+    await callback_query.message.answer("Введите время в формате ЧЧ:ММ", reply_markup=keyboard)
     await ScheduleTemplate.waiting_for_time.set()
-
 
 @dp.message_handler(state=ScheduleTemplate.waiting_for_time)
 async def process_template_time(message: types.Message, state: FSMContext):
@@ -392,22 +442,18 @@ async def process_template_time(message: types.Message, state: FSMContext):
         time = datetime.strptime(message.text, "%H:%M").time().replace(second=0)
         await state.update_data(time=time)
 
-        # Добавляем кнопку "Назад"
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        back_button = InlineKeyboardButton(text="Назад", callback_data="create_template")
-        keyboard.add(back_button)
-
-        await message.answer("Пожалуйста, введите сообщение для планирования:", reply_markup=keyboard)
-        await ScheduleTemplate.waiting_for_message.set()
+        keyboard = create_interval_keyboard()
+        await message.answer("Выберите интервал для отправки сообщения:", reply_markup=keyboard)
+        await ScheduleTemplate.waiting_for_interval.set()  # Переход к новому состоянию
     except ValueError:
-        await message.answer("Пожалуйста, введите корректное время в формате ЧЧ:ММ.")
-
+        await message.answer("Введите корректное время в формате ЧЧ:ММ.")
 
 @dp.message_handler(state=ScheduleTemplate.waiting_for_message, content_types=types.ContentType.ANY)
 async def process_template_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
     weekday = data.get("weekday")
     time = data.get("time")
+    interval_weeks = data.get("interval_weeks")
 
     if weekday not in scheduled_messages:
         scheduled_messages[weekday] = []
@@ -415,16 +461,16 @@ async def process_template_message(message: types.Message, state: FSMContext):
     scheduled_messages[weekday].append({
         'time': time,
         'content_type': message.content_type,
-        'content': message
+        'content': message,
+        'interval_weeks': interval_weeks  # Сохраняем интервал
     })
 
     translated_weekday = weekdays_translation[weekday]
-    await message.answer(f"Сообщение для {translated_weekday} в {time.strftime('%H:%M')} запланировано.")
+    await message.answer(f"Сообщение для {translated_weekday} в {time.strftime('%H:%M')} запланировано с интервалом {interval_weeks} недель.")
     await state.finish()
 
     keyboard = create_main_menu()
     await message.answer("Вы вернулись в главное меню.", reply_markup=keyboard)
-
 
 # Обработчик сообщений в канале
 @dp.channel_post_handler()
@@ -437,6 +483,13 @@ async def on_new_channel_post(message: types.Message):
         logging.info(f"{datetime.now()} - Пользователь {user_id} создал пост, права админа отозваны")
 
 
+def escape_markdown_v2(text: str) -> str:
+    """
+    Экранирует специальные символы для MarkdownV2.
+    """
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 # Планировщик для автоматического понижения прав администратора
 async def scheduler():
     moscow_tz = pytz.timezone('Europe/Moscow')
@@ -445,69 +498,80 @@ async def scheduler():
         now = datetime.now(moscow_tz)
         current_weekday = now.strftime("%A").lower()
         current_time = now.time().replace(second=0, microsecond=0)
-        logging.info(f"{datetime.now()} - Текущий день: {current_weekday}, текущее время: {current_time}")
 
-        # Проверяем, не истекло ли время нажатия кнопки без создания поста
         for user_id, press_time in list(last_press_times.items()):
             try:
                 user_timezone = user_timezones.get(user_id, 'Europe/Moscow')
                 user_tz = pytz.timezone(user_timezone)
                 if isinstance(press_time, datetime):
-                    press_time = press_time.astimezone(user_tz)  # Переводим время в нужную временную зону пользователя
+                    press_time = press_time.astimezone(user_tz)
                     if now >= press_time:
                         await revoke_admin_rights(user_id)
                         del last_press_times[user_id]
-                        logging.info(
-                            f"{datetime.now()} - Пользователь {user_id} не создал пост в течение {admin_time_minutes} минут, права админа отозваны")
                 else:
                     logging.warning(f"{datetime.now()} - Неверный формат времени для пользователя {user_id}")
-                    # Дополнительные действия при необходимости
-
             except Exception as e:
                 logging.error(f"{datetime.now()} - Ошибка при проверке времени для пользователя {user_id}: {e}")
 
-        # Отправка запланированных сообщений
         if current_weekday in scheduled_messages:
             for template in scheduled_messages[current_weekday]:
-                last_sent_key = f"{current_weekday}_{template['time']}"
+                last_sent_key = f"{current_weekday}_{template['time']}_{template['interval_weeks']}"
                 last_sent_date = last_sent_dates.get(last_sent_key)
-
                 template_time = template['time'].replace(second=0, microsecond=0)
-                if last_sent_date != now.date() and template_time == current_time:
 
-                    logging.info(f"{datetime.now()} - Время отправки запланированного сообщения: {template['time']}")
+                if (template['interval_weeks'] == 0) or (last_sent_date is None or (now.date() - last_sent_date).days >= template['interval_weeks'] * 7):
+                    if template_time == current_time:
+                        content_type = template['content_type']
+                        content = template['content']
 
-                    content_type = template['content_type']
-                    content = template['content']
+                        try:
+                            if content_type == 'text':
+                                await bot.send_message(
+                                    chat_id=CHANNEL_ID,
+                                    text=escape_markdown_v2(content.text),
+                                    parse_mode='MarkdownV2'
+                                )
+                            elif content_type == 'photo':
+                                await bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=content.photo[-1].file_id,
+                                    caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                    parse_mode='MarkdownV2'
+                                )
+                            elif content_type == 'video':
+                                await bot.send_video(
+                                    chat_id=CHANNEL_ID,
+                                    video=content.video.file_id,
+                                    caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                    parse_mode='MarkdownV2'
+                                )
+                            elif content_type == 'audio':
+                                await bot.send_audio(
+                                    chat_id=CHANNEL_ID,
+                                    audio=content.audio.file_id,
+                                    caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                    parse_mode='MarkdownV2'
+                                )
+                            elif content_type == 'document':
+                                await bot.send_document(
+                                    chat_id=CHANNEL_ID,
+                                    document=content.document.file_id,
+                                    caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                    parse_mode='MarkdownV2'
+                                )
 
-                    try:
-                        if content_type == 'text':
-                            await bot.send_message(chat_id=CHANNEL_ID, text=content.text)
-                        elif content_type == 'photo':
-                            await bot.send_photo(chat_id=CHANNEL_ID, photo=content.photo[-1].file_id,
-                                                 caption=content.caption)
-                        elif content_type == 'video':
-                            await bot.send_video(chat_id=CHANNEL_ID, video=content.video.file_id,
-                                                 caption=content.caption)
-                        elif content_type == 'audio':
-                            await bot.send_audio(chat_id=CHANNEL_ID, audio=content.audio.file_id,
-                                                 caption=content.caption)
-                        elif content_type == 'document':
-                            await bot.send_document(chat_id=CHANNEL_ID, document=content.document.file_id,
-                                                    caption=content.caption)
+                            if template['interval_weeks'] == 0:
+                                scheduled_messages[current_weekday].remove(template)
+                                if not scheduled_messages[current_weekday]:
+                                    del scheduled_messages[current_weekday]
 
-                        last_sent_dates[last_sent_key] = now.date()
-                        logging.info(
-                            f"{datetime.now()} - Отправлено запланированное сообщение на {current_weekday} в {template['time']}")
+                            last_sent_dates[last_sent_key] = now.date()
+                            await update_admin_button()
 
-                        # Обновление кнопки после отправки запланированного сообщения
-                        await update_admin_button()
+                        except Exception as e:
+                            logging.error(f"{datetime.now()} - Ошибка при отправке запланированного сообщения: {e}")
 
-                    except Exception as e:
-                        logging.error(f"{datetime.now()} - Ошибка при отправке запланированного сообщения: {e}")
-
-        await asyncio.sleep(1)  # Пауза перед следующей итерацией
-
+        await asyncio.sleep(1)
 
 def escape_markdown_v2(text: str) -> str:
     """
@@ -515,6 +579,7 @@ def escape_markdown_v2(text: str) -> str:
     """
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 
 
 @dp.message_handler(content_types=types.ContentType.ANY, chat_id=DISCUSSION_GROUP_ID)
@@ -559,7 +624,7 @@ async def handle_discussion_message(message: types.Message):
 
         except Exception as e:
             logging.error(f"Ошибка при отправке уведомления: {e}")
-            
+
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.create_task(scheduler())
