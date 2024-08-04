@@ -19,6 +19,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 dp.middleware.setup(LoggingMiddleware())
 
+
 # Функция для экранирования специальных символов для MarkdownV2
 def escape_markdown_v2(text: str) -> str:
     """
@@ -68,6 +69,7 @@ class ScheduleTemplate(StatesGroup):
     waiting_for_interval = State()  # Новое состояние для выбора интервала
     waiting_for_custom_interval = State()  # Новое состояние для ввода кастомного интервала
 
+
 # Создатель канала (установите здесь правильный ID создателя канала)
 CREATOR_ID = 1250100261  # замените на фактический ID создателя канала
 
@@ -85,6 +87,7 @@ def create_time_keyboard():
     keyboard.add(*buttons)
     return keyboard
 
+
 def create_template_menu():
     keyboard = InlineKeyboardMarkup(row_width=2)
     buttons = [
@@ -93,6 +96,7 @@ def create_template_menu():
     ]
     keyboard.add(*buttons)
     return keyboard
+
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "view_templates")
 async def view_templates(callback_query: types.CallbackQuery):
@@ -135,6 +139,7 @@ async def view_templates(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
+
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("select_template_"))
 async def select_template(callback_query: types.CallbackQuery):
     if callback_query.from_user.id == CREATOR_ID:
@@ -167,6 +172,7 @@ async def select_template(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
+
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("delete_template_"))
 async def delete_template(callback_query: types.CallbackQuery):
     if callback_query.from_user.id == CREATOR_ID:
@@ -186,6 +192,7 @@ async def delete_template(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
+
 def create_weekday_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     buttons = [
@@ -201,6 +208,7 @@ def create_weekday_keyboard():
     keyboard.add(*buttons)
     return keyboard
 
+
 def create_main_menu():
     keyboard = InlineKeyboardMarkup(row_width=1)  # Установите row_width на 1 для отображения кнопок в столбик
     buttons = [
@@ -209,6 +217,7 @@ def create_main_menu():
     ]
     keyboard.add(*buttons)
     return keyboard
+
 
 def create_interval_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -222,10 +231,13 @@ def create_interval_keyboard():
     keyboard.add(*buttons)
     return keyboard
 
-@dp.callback_query_handler(lambda callback_query: callback_query.data == "set_custom_interval", state=ScheduleTemplate.waiting_for_interval)
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == "set_custom_interval",
+                           state=ScheduleTemplate.waiting_for_interval)
 async def set_custom_interval(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text("Введите интервал в неделях:")
     await ScheduleTemplate.waiting_for_custom_interval.set()
+
 
 @dp.message_handler(state=ScheduleTemplate.waiting_for_custom_interval)
 async def process_custom_interval(message: types.Message, state: FSMContext):
@@ -238,13 +250,17 @@ async def process_custom_interval(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("Введите корректное число.")
 
-@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("interval_"), state=ScheduleTemplate.waiting_for_interval)
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("interval_"),
+                           state=ScheduleTemplate.waiting_for_interval)
 async def process_template_interval(callback_query: types.CallbackQuery, state: FSMContext):
     interval_weeks = int(callback_query.data.split("_")[1])
     await state.update_data(interval_weeks=interval_weeks)
 
-    await callback_query.message.edit_text(f"Интервал установлен на {interval_weeks} недель. Введите сообщение для планирования:")
+    await callback_query.message.edit_text(
+        f"Интервал установлен на {interval_weeks} недель. Введите сообщение для планирования:")
     await ScheduleTemplate.waiting_for_message.set()
+
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "main_menu", state="*")
 async def return_to_main_menu(callback_query: types.CallbackQuery, state: FSMContext):
@@ -254,6 +270,7 @@ async def return_to_main_menu(callback_query: types.CallbackQuery, state: FSMCon
         await state.finish()  # Завершаем текущее состояние
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
+
 
 async def update_admin_button():
     if CHANNEL_ID in current_messages:
@@ -346,6 +363,7 @@ async def on_publish_post(callback_query: types.CallbackQuery):
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при предоставлении прав администратора пользователю {user_id}: {e}")
 
+
 async def revoke_admin_rights(user_id):
     try:
         # Отзываем администраторские права у пользователя
@@ -359,6 +377,7 @@ async def revoke_admin_rights(user_id):
     except Exception as e:
         logging.error(f"{datetime.now()} - Ошибка при отзыве прав администратора у пользователя {user_id}: {e}")
 
+
 @dp.message_handler(commands=['start'])
 async def start_command(message: types.Message):
     if message.from_user.id == CREATOR_ID:
@@ -366,6 +385,7 @@ async def start_command(message: types.Message):
         await message.answer("Добро пожаловать! Выберите действие:", reply_markup=keyboard)
     else:
         await message.answer("У вас нет прав для использования этого бота.")
+
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "set_admin_time")
 async def set_admin_time(callback_query: types.CallbackQuery):
@@ -376,11 +396,13 @@ async def set_admin_time(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
+
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "set_time_custom")
 async def set_time_custom(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text(
         "Введите время в минутах для предоставления прав администратора:")
     await AdminTime.waiting_for_custom_time.set()
+
 
 @dp.message_handler(state=AdminTime.waiting_for_custom_time)
 async def process_custom_time(message: types.Message, state: FSMContext):
@@ -398,6 +420,7 @@ async def process_custom_time(message: types.Message, state: FSMContext):
         await state.finish()
     except ValueError:
         await message.answer("Введите корректное число.")
+
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "schedule_message")
 async def schedule_message(callback_query: types.CallbackQuery):
@@ -417,6 +440,7 @@ async def create_template(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("У вас нет прав для выполнения этой команды.", show_alert=True)
 
+
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
                            state=ScheduleTemplate.waiting_for_day)
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("weekday_"),
@@ -435,6 +459,7 @@ async def process_weekday(callback_query: types.CallbackQuery, state: FSMContext
     await callback_query.message.answer("Введите время в формате ЧЧ:ММ", reply_markup=keyboard)
     await ScheduleTemplate.waiting_for_time.set()
 
+
 @dp.message_handler(state=ScheduleTemplate.waiting_for_time)
 async def process_template_time(message: types.Message, state: FSMContext):
     try:
@@ -447,6 +472,13 @@ async def process_template_time(message: types.Message, state: FSMContext):
         await ScheduleTemplate.waiting_for_interval.set()  # Переход к новому состоянию
     except ValueError:
         await message.answer("Введите корректное время в формате ЧЧ:ММ.")
+
+
+# Обработчик сообщений в канале
+@dp.channel_post_handler(content_types=['text', 'photo', 'audio', 'video', 'document', 'voice', 'video_note'])
+async def on_new_channel_post(message: types.Message):
+    await update_admin_button()
+
 
 @dp.message_handler(state=ScheduleTemplate.waiting_for_message, content_types=types.ContentType.ANY)
 async def process_template_message(message: types.Message, state: FSMContext):
@@ -466,11 +498,13 @@ async def process_template_message(message: types.Message, state: FSMContext):
     })
 
     translated_weekday = weekdays_translation[weekday]
-    await message.answer(f"Сообщение для {translated_weekday} в {time.strftime('%H:%M')} запланировано с интервалом {interval_weeks} недель.")
+    await message.answer(
+        f"Сообщение для {translated_weekday} в {time.strftime('%H:%M')} запланировано с интервалом {interval_weeks} недель.")
     await state.finish()
 
     keyboard = create_main_menu()
     await message.answer("Вы вернулись в главное меню.", reply_markup=keyboard)
+
 
 # Обработчик сообщений в канале
 @dp.channel_post_handler()
@@ -489,6 +523,7 @@ def escape_markdown_v2(text: str) -> str:
     """
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 
 # Планировщик для автоматического понижения прав администратора
 async def scheduler():
@@ -519,7 +554,8 @@ async def scheduler():
                 last_sent_date = last_sent_dates.get(last_sent_key)
                 template_time = template['time'].replace(second=0, microsecond=0)
 
-                if (template['interval_weeks'] == 0) or (last_sent_date is None or (now.date() - last_sent_date).days >= template['interval_weeks'] * 7):
+                if (template['interval_weeks'] == 0) or (
+                        last_sent_date is None or (now.date() - last_sent_date).days >= template['interval_weeks'] * 7):
                     if template_time == current_time:
                         content_type = template['content_type']
                         content = template['content']
@@ -545,6 +581,28 @@ async def scheduler():
                                     caption=escape_markdown_v2(content.caption) if content.caption else None,
                                     parse_mode='MarkdownV2'
                                 )
+                            elif content_type == 'document':
+                                if content.document.mime_type.startswith('image/'):
+                                    await bot.send_photo(
+                                        chat_id=CHANNEL_ID,
+                                        photo=content.document.file_id,
+                                        caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                        parse_mode='MarkdownV2'
+                                    )
+                                elif content.document.mime_type.startswith('video/'):
+                                    await bot.send_video(
+                                        chat_id=CHANNEL_ID,
+                                        video=content.document.file_id,
+                                        caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                        parse_mode='MarkdownV2'
+                                    )
+                                else:
+                                    await bot.send_document(
+                                        chat_id=CHANNEL_ID,
+                                        document=content.document.file_id,
+                                        caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                        parse_mode='MarkdownV2'
+                                    )
                             elif content_type == 'audio':
                                 await bot.send_audio(
                                     chat_id=CHANNEL_ID,
@@ -552,14 +610,20 @@ async def scheduler():
                                     caption=escape_markdown_v2(content.caption) if content.caption else None,
                                     parse_mode='MarkdownV2'
                                 )
-                            elif content_type == 'document':
-                                await bot.send_document(
+                            elif content_type == 'voice':
+                                await bot.send_voice(
                                     chat_id=CHANNEL_ID,
-                                    document=content.document.file_id,
+                                    voice=content.voice.file_id,
                                     caption=escape_markdown_v2(content.caption) if content.caption else None,
                                     parse_mode='MarkdownV2'
                                 )
-
+                            elif content_type == 'video_note':
+                                await bot.send_video_note(
+                                    chat_id=CHANNEL_ID,
+                                    video_note=content.video_note.file_id,
+                                    caption=escape_markdown_v2(content.caption) if content.caption else None,
+                                    parse_mode='MarkdownV2'
+                                )
                             if template['interval_weeks'] == 0:
                                 scheduled_messages[current_weekday].remove(template)
                                 if not scheduled_messages[current_weekday]:
@@ -572,15 +636,6 @@ async def scheduler():
                             logging.error(f"{datetime.now()} - Ошибка при отправке запланированного сообщения: {e}")
 
         await asyncio.sleep(1)
-
-def escape_markdown_v2(text: str) -> str:
-    """
-    Экранирует специальные символы для MarkdownV2.
-    """
-    escape_chars = r'\_*[]()~`>#+-=|{}.!'
-    return ''.join(['\\' + char if char in escape_chars else char for char in text])
-
-
 
 @dp.message_handler(content_types=types.ContentType.ANY, chat_id=DISCUSSION_GROUP_ID)
 async def handle_discussion_message(message: types.Message):
@@ -624,6 +679,7 @@ async def handle_discussion_message(message: types.Message):
 
         except Exception as e:
             logging.error(f"Ошибка при отправке уведомления: {e}")
+
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
